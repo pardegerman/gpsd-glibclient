@@ -1,10 +1,13 @@
+#include <unistd.h>
 #include <glib.h>
 #include <errno.h>
 #include <gps.h>
 
+#include "nxjson.h"
 #include "gpsd_source.h"
 
 #define GPSD_TIMEOUT 100000
+#define BUF_SIZE 4096
 
 typedef struct {
   GSource g_source;
@@ -35,22 +38,33 @@ static gboolean check(GSource *gsource)
 
 static gboolean dispatch(GSource *gsource, GSourceFunc callback, gpointer user_data)
 {
+  gboolean ret = FALSE;
+  static gchar buf[BUF_SIZE];
   GpsdSource *src = (GpsdSource *)gsource;
-  gboolean ret;
-  gint nbytes = gps_read(&(src->gpsdata));
+  gint nbytes = read(src->gpsdata.gps_fd, buf, BUF_SIZE);
+
   if (0 > nbytes)
   {
     fprintf(stderr, "error while reading from gpsd: %d, %s\n", errno, gps_errstr(errno));
-    ret = FALSE;
-  }
-  else if (0 == nbytes)
-  {
-    fprintf(stderr, "No data this time\n");
-    ret = FALSE;
   }
   else if (NULL != callback)
   {
-    ret = callback(&(src->gpsdata));
+    gchar **lines = g_strsplit(g_strstrip(buf), "\n", -1);
+    gchar **line;
+    printf("Got [%s]\n", buf);
+
+    /* Decode all received lines */
+    for (line = lines; *line; line++) {
+      const nx_json *json = nx_json_parse(*line, 0);
+      if (json) {
+        const gchar *class = nx_json_get(json, "class")->text_value;
+        printf("\tDecoded JSON, class: %s\n", class);
+        nx_json_free(json);
+      }
+    }
+
+    g_strfreev(lines);
+    /* ret = callback(&(src->gpsdata)); */
   }
   return ret;
 }
@@ -66,7 +80,7 @@ GSource *gpsd_source_new(const gchar *host, const gchar *port)
     fprintf(stderr, "no gpsd running or network error: %d, %s\n", errno, gps_errstr(errno));
     return NULL;
   }
-  gps_stream(&(src->gpsdata), WATCH_ENABLE, NULL);
+  gps_stream(&(src->gpsdata), WATCH_ENABLE | WATCH_JSON, NULL);
 
   return (GSource *)src;
 }
