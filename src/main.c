@@ -3,7 +3,7 @@
 
 #include "gpsd_source.h"
 
-static gboolean cb(struct gps_data_t *gpsdata)
+static gboolean cb(struct gps_data_t *gpsdata, gpointer user_data)
 {
   if (0 == gpsdata->online)
   {

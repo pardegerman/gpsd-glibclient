@@ -4,7 +4,7 @@
 #include <glib.h>
 #include <gps.h>
 
-typedef gboolean (*GpsdSourceFunc)(struct gps_data_t *gpsdata);
+typedef gboolean (*GpsdSourceFunc)(struct gps_data_t *gpsdata, gpointer user_data);
 
 GSource *gpsd_source_new(const gchar *host, const gchar *port);
 

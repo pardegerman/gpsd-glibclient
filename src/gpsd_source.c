@@ -52,6 +52,13 @@ static gboolean dispatch(GSource *source, GSourceFunc callback, gpointer user_da
   printf("--> Dispatch\n");
   GpsdSource *gpsdsource = (GpsdSource *)source;
   struct gps_data_t *gpsdata = &(gpsdsource->gpsdata);
+  GpsdSourceFunc gpsd_callback = (GpsdSourceFunc)callback;
+
+  if (NULL != gpsdata && NULL != gpsd_callback)
+  {
+    gpsd_callback(gpsdata, user_data);
+    gpsdata->set = 0;
+  }
   printf("<-- Dispatch\n");
   return TRUE;
 }
