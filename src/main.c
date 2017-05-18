@@ -3,17 +3,15 @@
 
 #include "gpsd_source.h"
 
-static gboolean cb(gpointer user_data)
+static gboolean cb(struct gps_data_t *gpsdata)
 {
-  struct gps_data_t *gps_data = (struct gps_data_t *)user_data;
-
-  if (0 == gps_data->online)
+  if (0 == gpsdata->online)
   {
     printf("OFFLINE\n");
   }
   else
   {
-    switch (gps_data->fix.mode)
+    switch (gpsdata->fix.mode)
     {
       case MODE_2D:
         printf("2D FIX\n");
@@ -40,11 +38,10 @@ int main(int argc, char** argv)
   gpsd_src = gpsd_source_new(host, port);
   g_source_attach(gpsd_src, NULL);
   loop = g_main_loop_new (NULL, FALSE);
-  g_source_set_callback(gpsd_src, cb, NULL, NULL);
+  g_source_set_callback(gpsd_src, (GSourceFunc)cb, NULL, NULL);
 
   /* Create and run main loop */
   g_main_loop_run(loop);
 
-  gpsd_source_destroy(gpsd_src);
   g_main_loop_unref(loop);
 }

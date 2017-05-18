@@ -1,12 +1,12 @@
-#include <unistd.h>
 #include <glib.h>
+#include <gio/gio.h>
+
 #include <errno.h>
 #include <gps.h>
 
 #include "nxjson.h"
 #include "gpsd_source.h"
 
-#define GPSD_TIMEOUT 100000
 #define BUF_SIZE 4096
 
 typedef struct {
@@ -14,79 +14,77 @@ typedef struct {
   struct gps_data_t gpsdata;
 } GpsdSource;
 
-static gboolean prepare(GSource *gsource, gint *timeout)
+static gboolean on_gpsd_data(GSocket *socket, GIOCondition condition, gpointer user_data)
 {
-  GpsdSource *src = (GpsdSource *)gsource;
-  gboolean ret = gps_waiting(&(src->gpsdata), GPSD_TIMEOUT);
-  if (!ret)
-  {
-    printf("No data waiting from gpsd, waiting...\n");
-    *timeout = 100;
-  }
-  else
-  {
-    *timeout = -1;
-  }
-  return ret;
-}
-
-static gboolean check(GSource *gsource)
-{
-  GpsdSource *src = (GpsdSource *)gsource;
-  return gps_waiting(&(src->gpsdata), GPSD_TIMEOUT);
-}
-
-static gboolean dispatch(GSource *gsource, GSourceFunc callback, gpointer user_data)
-{
-  gboolean ret = FALSE;
+  struct gps_data_t *gpsdata = (struct gps_data_t *)user_data;
+  static gint pos = 0;
   static gchar buf[BUF_SIZE];
-  GpsdSource *src = (GpsdSource *)gsource;
-  gint nbytes = read(src->gpsdata.gps_fd, buf, BUF_SIZE);
 
-  if (0 > nbytes)
+  if (G_IO_IN & condition)
   {
-    fprintf(stderr, "error while reading from gpsd: %d, %s\n", errno, gps_errstr(errno));
-  }
-  else if (NULL != callback)
-  {
-    gchar **lines = g_strsplit(g_strstrip(buf), "\n", -1);
-    gchar **line;
-    printf("Got [%s]\n", buf);
-
-    /* Decode all received lines */
-    for (line = lines; *line; line++) {
-      const nx_json *json = nx_json_parse(*line, 0);
-      if (json) {
-        const gchar *class = nx_json_get(json, "class")->text_value;
-        printf("\tDecoded JSON, class: %s\n", class);
-        nx_json_free(json);
+    while (BUF_SIZE > pos && 1 == g_socket_receive(socket, buf + pos, 1, NULL, NULL))
+    {
+      if ('\r' == buf[pos])
+      {
+        /* Skip \r */
+      }
+      else if ('\n' == buf[pos])
+      {
+        /* A full line, let's parse it */
+        buf[pos] = '\0';
+        printf("-- Read a line: [%s]\n", buf);
+        pos = 0;
+      }
+      else
+      {
+        /* Continue */
+        pos++;
       }
     }
-
-    g_strfreev(lines);
-    /* ret = callback(&(src->gpsdata)); */
   }
-  return ret;
+
+  /* TODO: Return FALSE on disconnect et. al. */
+  return TRUE;
 }
 
-static GSourceFuncs fcns = { prepare, check, dispatch, NULL };
+static gboolean dispatch(GSource *source, GSourceFunc callback, gpointer user_data)
+{
+  printf("--> Dispatch\n");
+  GpsdSource *gpsdsource = (GpsdSource *)source;
+  struct gps_data_t *gpsdata = &(gpsdsource->gpsdata);
+  printf("<-- Dispatch\n");
+  return TRUE;
+}
+
+static void finalize(GSource *source)
+{
+  GpsdSource *gpsdsource = (GpsdSource *)source;
+  gps_close(&(gpsdsource->gpsdata));
+}
+
+static GSourceFuncs fcns = { NULL, NULL, dispatch, finalize };
 
 GSource *gpsd_source_new(const gchar *host, const gchar *port)
 {
-  GpsdSource *src = (GpsdSource *)g_source_new(&fcns, sizeof(GpsdSource));
+  GSource *source = g_source_new(&fcns, sizeof(GpsdSource));
+  struct gps_data_t *gpsdata = &(((GpsdSource *)source)->gpsdata);
+  GSocket *socket;
+  GSource *socketsource;
 
-  if (0 != gps_open(host, port, &(src->gpsdata)) != 0)
+  if (0 != gps_open(host, port, gpsdata) != 0)
   {
     fprintf(stderr, "no gpsd running or network error: %d, %s\n", errno, gps_errstr(errno));
     return NULL;
   }
-  gps_stream(&(src->gpsdata), WATCH_ENABLE | WATCH_JSON, NULL);
 
-  return (GSource *)src;
-}
+  socket = g_socket_new_from_fd(gpsdata->gps_fd, NULL);
+  g_socket_set_blocking(socket, false);
 
-void gpsd_source_destroy(GSource *gsource)
-{
-  GpsdSource *src = (GpsdSource *)gsource;
-  gps_close(&(src->gpsdata));
+  socketsource = g_socket_create_source(socket, G_IO_IN, NULL);
+  g_source_set_callback(socketsource, (GSourceFunc)on_gpsd_data, gpsdata, NULL);
+  g_source_add_child_source(source, (GSource *)socketsource);
+
+  gps_stream(gpsdata, WATCH_ENABLE | WATCH_JSON, NULL);
+  
+  return source;
 }

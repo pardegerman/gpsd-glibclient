@@ -2,10 +2,10 @@
 #define __GPSD_SOURCE_H
 
 #include <glib.h>
+#include <gps.h>
 
-typedef gboolean (*GpsdSourceFunc)(gpointer data);
+typedef gboolean (*GpsdSourceFunc)(struct gps_data_t *gpsdata);
 
 GSource *gpsd_source_new(const gchar *host, const gchar *port);
-void gpsd_source_destroy(GSource *gsource);
 
 #endif /* __GPSD_SOURCE_H */
